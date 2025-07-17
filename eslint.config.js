@@ -9,11 +9,37 @@ const compat = new FlatCompat({
 
 export default tseslint.config(
   {
-    ignores: [".next"],
+    ignores: [
+      // Build outputs
+      ".next",
+      "dist",
+      "build",
+      "out",
+      
+      // Dependencies
+      "node_modules",
+      
+      // Generated files
+      "drizzle/**/*.sql",
+      "drizzle/meta/**/*.json",
+      
+      // Logs and cache
+      "*.log",
+      ".cache",
+      
+      // Environment and config files that don't need linting
+      ".env*",
+      "*.config.js",
+      "!eslint.config.js", // But still lint this file
+      
+      // Coverage and test artifacts
+      "coverage",
+      ".nyc_output",
+    ],
   },
   ...compat.extends("next/core-web-vitals"),
   {
-    files: ["**/*.ts", "**/*.tsx"],
+    files: ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts"],
     plugins: {
       drizzle,
     },
@@ -55,6 +81,7 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: true,
+        tsconfigRootDir: import.meta.dirname,
       },
     },
   },
