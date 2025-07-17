@@ -1,0 +1,1 @@
+ALTER TABLE "search_ai_api_key" ADD CONSTRAINT "search_ai_api_key_app_id_unique" UNIQUE("app_id");

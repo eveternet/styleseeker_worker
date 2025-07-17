@@ -1,0 +1,1 @@
+ALTER TABLE "search_ai_vector" DROP COLUMN "is_published";

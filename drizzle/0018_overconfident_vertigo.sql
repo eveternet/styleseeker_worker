@@ -1,0 +1,1 @@
+ALTER TABLE "search_ai_app" ALTER COLUMN "webhook_id" SET NOT NULL;

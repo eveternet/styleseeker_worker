@@ -1,0 +1,1 @@
+ALTER TABLE "search_ai_user" ADD COLUMN "role" varchar(50) DEFAULT 'user' NOT NULL;

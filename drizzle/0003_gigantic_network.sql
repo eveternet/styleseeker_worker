@@ -1,0 +1,23 @@
+ALTER TABLE "search_ai_api_key" ALTER COLUMN "creator_clerk_user_id" SET DEFAULT 'system';--> statement-breakpoint
+ALTER TABLE "search_ai_api_key" ALTER COLUMN "creator_clerk_user_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_app" ALTER COLUMN "subscription_plan" SET DEFAULT 'free';--> statement-breakpoint
+ALTER TABLE "search_ai_app" ALTER COLUMN "subscription_plan" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_app" ALTER COLUMN "billing_status" SET DEFAULT 'active';--> statement-breakpoint
+ALTER TABLE "search_ai_app" ALTER COLUMN "billing_status" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_app" ALTER COLUMN "plugin_name" SET DEFAULT 'unknown';--> statement-breakpoint
+ALTER TABLE "search_ai_app" ALTER COLUMN "plugin_name" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_query" ALTER COLUMN "ip_address" SET DEFAULT 'unknown';--> statement-breakpoint
+ALTER TABLE "search_ai_query" ALTER COLUMN "ip_address" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_query" ALTER COLUMN "user_agent" SET DEFAULT 'unknown';--> statement-breakpoint
+ALTER TABLE "search_ai_query" ALTER COLUMN "user_agent" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_query" ALTER COLUMN "session_id" SET DEFAULT 'anonymous';--> statement-breakpoint
+ALTER TABLE "search_ai_query" ALTER COLUMN "session_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_query_result" ALTER COLUMN "product_ids_returned" SET DEFAULT '[]';--> statement-breakpoint
+ALTER TABLE "search_ai_query_result" ALTER COLUMN "product_ids_returned" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_query_result" ALTER COLUMN "response_time_ms" SET DEFAULT 0;--> statement-breakpoint
+ALTER TABLE "search_ai_query_result" ALTER COLUMN "response_time_ms" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_usage_summary" ALTER COLUMN "billing_period" SET DEFAULT 'monthly';--> statement-breakpoint
+ALTER TABLE "search_ai_usage_summary" ALTER COLUMN "billing_period" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_vector" ALTER COLUMN "product_name" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_vector" ALTER COLUMN "embedding" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "search_ai_vector" ALTER COLUMN "checksum" SET NOT NULL;

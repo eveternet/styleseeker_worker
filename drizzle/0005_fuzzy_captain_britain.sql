@@ -1,0 +1,1 @@
+ALTER TABLE "search_ai_vector" ALTER COLUMN "embedding" SET DATA TYPE vector(1408);

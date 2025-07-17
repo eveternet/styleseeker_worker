@@ -1,0 +1,1 @@
+ALTER TABLE "search_ai_vector" ADD COLUMN "is_published" boolean DEFAULT false NOT NULL;

@@ -1,0 +1,1 @@
+DROP TABLE "search_ai_vector" CASCADE;
