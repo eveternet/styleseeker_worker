@@ -30,7 +30,7 @@ export const apps = createTable("app", {
     .default(sql`CURRENT_TIMESTAMP`)
     .notNull(),
   dateUpdated: timestamp("date_updated", { withTimezone: true }).$onUpdate(
-    () => new Date(),
+    () => new Date()
   ),
   subscriptionPlan: varchar("subscription_plan", { length: 100 })
     .notNull()
@@ -58,7 +58,7 @@ export const apiKeys = createTable(
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
     dateUpdated: timestamp("date_updated", { withTimezone: true }).$onUpdate(
-      () => new Date(),
+      () => new Date()
     ),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     isActive: boolean("is_active").default(true).notNull(),
@@ -66,7 +66,7 @@ export const apiKeys = createTable(
       .notNull()
       .default("system"),
   },
-  (table) => [index("api_key_app_idx").on(table.appId)],
+  (table) => [index("api_key_app_idx").on(table.appId)]
 );
 
 // PLUGIN_CONFIG_SHOPCADA table
@@ -85,7 +85,7 @@ export const pluginConfigShopcadaWebhook = createTable(
       .primaryKey()
       .references(() => apps.appId),
     webhookSecret: varchar("webhook_secret", { length: 255 }).notNull(),
-  },
+  }
 );
 
 // VECTORS table
@@ -104,7 +104,7 @@ export const vectors = createTable(
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
     dateUpdated: timestamp("date_updated", { withTimezone: true }).$onUpdate(
-      () => new Date(),
+      () => new Date()
     ),
     isPublished: boolean("is_published").notNull().default(false),
   },
@@ -114,7 +114,7 @@ export const vectors = createTable(
     index("vector_app_idx").on(table.appId),
     index("vector_full_text_idx").on(table.fullText),
     index("vector_image_urls_idx").on(table.imageUrls),
-  ],
+  ]
 );
 
 // Define relationships
@@ -139,7 +139,7 @@ export const pluginConfigShopcadaRelations = relations(
       fields: [pluginConfigShopcada.appId],
       references: [apps.appId],
     }),
-  }),
+  })
 );
 
 export const pluginConfigShopcadaWebhookRelations = relations(
@@ -149,7 +149,7 @@ export const pluginConfigShopcadaWebhookRelations = relations(
       fields: [pluginConfigShopcadaWebhook.appId],
       references: [apps.appId],
     }),
-  }),
+  })
 );
 
 export const vectorsRelations = relations(vectors, ({ one }) => ({

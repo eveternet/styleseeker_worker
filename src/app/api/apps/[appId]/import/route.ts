@@ -5,56 +5,71 @@ import { eq } from "drizzle-orm";
 import { verifyApiKey } from "../../../../lib/api_key/api_key";
 
 // Helper function to add CORS headers
-function setCorsHeaders(response: NextResponse, origin?: string | null): NextResponse {
+function setCorsHeaders(
+  response: NextResponse,
+  origin?: string | null
+): NextResponse {
   // Check if origin is allowed
-  const isAllowedOrigin = origin && (
-    origin === 'https://styleseeker.app' ||
-    origin === 'https://www.styleseeker.app' ||
-    origin.endsWith('.styleseeker.app')
-  );
+  const isAllowedOrigin =
+    origin &&
+    (origin === "https://styleseeker.app" ||
+      origin === "https://www.styleseeker.app" ||
+      origin.endsWith(".styleseeker.app"));
 
   if (isAllowedOrigin) {
-    response.headers.set('Access-Control-Allow-Origin', origin);
-    response.headers.set('Access-Control-Allow-Credentials', 'true');
+    response.headers.set("Access-Control-Allow-Origin", origin);
+    response.headers.set("Access-Control-Allow-Credentials", "true");
   }
 
-  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-  response.headers.set('Access-Control-Max-Age', '86400');
+  response.headers.set(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS"
+  );
+  response.headers.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Requested-With"
+  );
+  response.headers.set("Access-Control-Max-Age", "86400");
 
   return response;
 }
 
 // Handle preflight OPTIONS requests
 export async function OPTIONS(request: Request) {
-  const origin = request.headers.get('origin');
+  const origin = request.headers.get("origin");
   console.log(`[API CORS] OPTIONS request from origin: ${origin}`);
-  
+
   const response = new NextResponse(null, { status: 200 });
   return setCorsHeaders(response, origin);
 }
 
 export async function POST(
   request: Request,
-  { params }: { params: Promise<{ appId: string }> },
+  { params }: { params: Promise<{ appId: string }> }
 ) {
-  const origin = request.headers.get('origin');
+  const origin = request.headers.get("origin");
   console.log(`[API CORS] POST request from origin: ${origin}`);
-  
+
   try {
     // Await params first
     const { appId } = await params;
     const parsedAppId = parseInt(appId);
 
     if (isNaN(parsedAppId) || parsedAppId <= 0) {
-      const response = NextResponse.json({ error: "Invalid app ID" }, { status: 400 });
+      const response = NextResponse.json(
+        { error: "Invalid app ID" },
+        { status: 400 }
+      );
       return setCorsHeaders(response, origin);
     }
 
     // Verify API key for the specific app
     const isValidApiKey = await verifyApiKey(request, parsedAppId);
     if (!isValidApiKey) {
-      const response = NextResponse.json({ error: "Invalid API key" }, { status: 401 });
+      const response = NextResponse.json(
+        { error: "Invalid API key" },
+        { status: 401 }
+      );
       return setCorsHeaders(response, origin);
     }
 
@@ -66,7 +81,10 @@ export async function POST(
       .limit(1);
 
     if (!app) {
-      const response = NextResponse.json({ error: "App not found" }, { status: 404 });
+      const response = NextResponse.json(
+        { error: "App not found" },
+        { status: 404 }
+      );
       return setCorsHeaders(response, origin);
     }
 
@@ -86,27 +104,49 @@ export async function POST(
               "App is not properly configured. API hostname and API key are required for importing products.",
             requiresConfiguration: true,
           },
-          { status: 400 },
+          { status: 400 }
         );
         return setCorsHeaders(response, origin);
       }
     }
 
-    // Dynamically import and create embedding service
+    // Start background import (fire and forget)
     try {
+      // Start the import process in the background without waiting
       const { ProductEmbeddingService } = await import(
         "../../../../lib/embedding/embed_products"
       );
-      const embeddingService = new ProductEmbeddingService();
-      const result =
-        await embeddingService.processAndStoreProducts(parsedAppId);
 
-      const response = NextResponse.json(result);
+      // Process in background (don't await)
+      (async () => {
+        try {
+          console.log(`[Background Import] Starting for app ${parsedAppId}`);
+          const embeddingService = new ProductEmbeddingService();
+          const result =
+            await embeddingService.processAndStoreProducts(parsedAppId);
+          console.log(
+            `[Background Import] Completed for app ${parsedAppId}:`,
+            result.message
+          );
+        } catch (error) {
+          console.error(
+            `[Background Import] Failed for app ${parsedAppId}:`,
+            error
+          );
+        }
+      })();
+
+      // Return success immediately
+      const response = NextResponse.json({
+        message: "Import started successfully in background",
+        status: "processing",
+        note: "This process may take several minutes to complete. Products will appear as they are processed.",
+      });
       return setCorsHeaders(response, origin);
     } catch (importError) {
       console.error(
         "Failed to initialize ProductEmbeddingService:",
-        importError,
+        importError
       );
 
       // Check if this is a configuration-related error
@@ -137,7 +177,7 @@ export async function POST(
               "4. Ensure your Shopcada service is running and accessible",
             ],
           },
-          { status: 400 },
+          { status: 400 }
         );
         return setCorsHeaders(response, origin);
       }
@@ -152,7 +192,7 @@ export async function POST(
               ? importError.message
               : "Unknown error",
         },
-        { status: 500 },
+        { status: 500 }
       );
       return setCorsHeaders(response, origin);
     }
@@ -166,7 +206,7 @@ export async function POST(
             ? error.message
             : "An unexpected error occurred",
       },
-      { status: 500 },
+      { status: 500 }
     );
     return setCorsHeaders(response, origin);
   }
