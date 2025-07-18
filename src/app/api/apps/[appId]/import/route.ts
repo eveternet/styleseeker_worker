@@ -4,23 +4,58 @@ import { pluginConfigShopcada, apps } from "../../../../../server/db/schema";
 import { eq } from "drizzle-orm";
 import { verifyApiKey } from "../../../../lib/api_key/api_key";
 
+// Helper function to add CORS headers
+function setCorsHeaders(response: NextResponse, origin?: string | null): NextResponse {
+  // Check if origin is allowed
+  const isAllowedOrigin = origin && (
+    origin === 'https://styleseeker.app' ||
+    origin === 'https://www.styleseeker.app' ||
+    origin.endsWith('.styleseeker.app')
+  );
+
+  if (isAllowedOrigin) {
+    response.headers.set('Access-Control-Allow-Origin', origin);
+    response.headers.set('Access-Control-Allow-Credentials', 'true');
+  }
+
+  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  response.headers.set('Access-Control-Max-Age', '86400');
+
+  return response;
+}
+
+// Handle preflight OPTIONS requests
+export async function OPTIONS(request: Request) {
+  const origin = request.headers.get('origin');
+  console.log(`[API CORS] OPTIONS request from origin: ${origin}`);
+  
+  const response = new NextResponse(null, { status: 200 });
+  return setCorsHeaders(response, origin);
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ appId: string }> },
 ) {
+  const origin = request.headers.get('origin');
+  console.log(`[API CORS] POST request from origin: ${origin}`);
+  
   try {
     // Await params first
     const { appId } = await params;
     const parsedAppId = parseInt(appId);
 
     if (isNaN(parsedAppId) || parsedAppId <= 0) {
-      return NextResponse.json({ error: "Invalid app ID" }, { status: 400 });
+      const response = NextResponse.json({ error: "Invalid app ID" }, { status: 400 });
+      return setCorsHeaders(response, origin);
     }
 
     // Verify API key for the specific app
     const isValidApiKey = await verifyApiKey(request, parsedAppId);
     if (!isValidApiKey) {
-      return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
+      const response = NextResponse.json({ error: "Invalid API key" }, { status: 401 });
+      return setCorsHeaders(response, origin);
     }
 
     // Get the app to verify it exists
@@ -31,7 +66,8 @@ export async function POST(
       .limit(1);
 
     if (!app) {
-      return NextResponse.json({ error: "App not found" }, { status: 404 });
+      const response = NextResponse.json({ error: "App not found" }, { status: 404 });
+      return setCorsHeaders(response, origin);
     }
 
     // Check if the app is properly configured before attempting import
@@ -43,7 +79,7 @@ export async function POST(
         .limit(1);
 
       if (!config?.apiHostname || !config?.apiKey) {
-        return NextResponse.json(
+        const response = NextResponse.json(
           {
             error: "App configuration missing",
             message:
@@ -52,6 +88,7 @@ export async function POST(
           },
           { status: 400 },
         );
+        return setCorsHeaders(response, origin);
       }
     }
 
@@ -64,7 +101,8 @@ export async function POST(
       const result =
         await embeddingService.processAndStoreProducts(parsedAppId);
 
-      return NextResponse.json(result);
+      const response = NextResponse.json(result);
+      return setCorsHeaders(response, origin);
     } catch (importError) {
       console.error(
         "Failed to initialize ProductEmbeddingService:",
@@ -78,7 +116,7 @@ export async function POST(
           importError.message.includes("Not Found") ||
           importError.message.includes("Failed to fetch products"))
       ) {
-        return NextResponse.json(
+        const response = NextResponse.json(
           {
             error: "API Configuration Issue",
             message:
@@ -101,9 +139,10 @@ export async function POST(
           },
           { status: 400 },
         );
+        return setCorsHeaders(response, origin);
       }
 
-      return NextResponse.json(
+      const response = NextResponse.json(
         {
           error: "Import failed",
           message:
@@ -115,10 +154,11 @@ export async function POST(
         },
         { status: 500 },
       );
+      return setCorsHeaders(response, origin);
     }
   } catch (error) {
     console.error("Error in import route:", error);
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         error: "Internal server error",
         message:
@@ -128,5 +168,6 @@ export async function POST(
       },
       { status: 500 },
     );
+    return setCorsHeaders(response, origin);
   }
 }
