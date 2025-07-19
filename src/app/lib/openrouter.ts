@@ -1,15 +1,13 @@
 import OpenAI from "openai";
 import type { ChatCompletion } from "openai/resources/chat/completions";
 
-// Custom types for OpenRouter's extended functionality
-interface OpenRouterCacheControl {
-  type: "ephemeral";
-}
-
+// Types for OpenRouter API
 interface OpenRouterContentPartText {
   type: "text";
   text: string;
-  cache_control?: OpenRouterCacheControl;
+  cache_control?: {
+    type: "ephemeral";
+  };
 }
 
 interface OpenRouterContentPartImage {
@@ -25,24 +23,7 @@ type OpenRouterContentPart =
 
 interface OpenRouterMessage {
   role: "system" | "user" | "assistant";
-  content: OpenRouterContentPart[] | string;
-}
-
-interface OpenRouterResponse {
-  choices: {
-    message: {
-      content: string;
-    };
-    finish_reason?: string;
-  }[];
-}
-
-interface OpenRouterStreamResponse {
-  choices: {
-    delta: {
-      content: string;
-    };
-  }[];
+  content: OpenRouterContentPart[];
 }
 
 interface OpenRouterOptions {
@@ -50,6 +31,80 @@ interface OpenRouterOptions {
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
+}
+
+// Create a shared OpenAI client instance for connection reuse
+let sharedClient: OpenAI | null = null;
+
+function getSharedClient(): OpenAI {
+  if (!sharedClient) {
+    if (!process.env.OPENROUTER_API_KEY) {
+      throw new Error("OPENROUTER_API_KEY is not set in environment variables");
+    }
+
+    sharedClient = new OpenAI({
+      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: process.env.OPENROUTER_API_KEY,
+      defaultHeaders: {
+        "HTTP-Referer":
+          process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+        "X-Title": "Search AI",
+      },
+      // Optimize for concurrent requests
+      maxRetries: 3,
+      timeout: 60000, // 60 second timeout
+    });
+  }
+  return sharedClient;
+}
+
+/**
+ * Sleep function for retry delays
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Retry function with exponential backoff
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 1000
+): Promise<T> {
+  let lastError: Error;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+
+      // Don't retry on certain error types
+      if (
+        error instanceof Error &&
+        (error.message.includes("content_filter") ||
+          error.message.includes("invalid_request") ||
+          error.message.includes("authentication"))
+      ) {
+        throw error;
+      }
+
+      if (attempt === maxRetries) {
+        break;
+      }
+
+      // Exponential backoff: 1s, 2s, 4s, 8s...
+      const delay = baseDelay * Math.pow(2, attempt);
+      console.log(
+        `🔄 Retry attempt ${attempt + 1}/${maxRetries} after ${delay}ms delay...`
+      );
+      await sleep(delay);
+    }
+  }
+
+  throw lastError!;
 }
 
 /**
@@ -70,7 +125,7 @@ async function validateImageUrls(imageUrls: string[]): Promise<string[]> {
       } else {
         console.error(`❌ Invalid image URL or not an image: ${url}`);
         console.error(
-          `   Status: ${response.status}, Content-Type: ${response.headers.get("content-type")}`,
+          `   Status: ${response.status}, Content-Type: ${response.headers.get("content-type")}`
         );
       }
     } catch (error) {
@@ -92,21 +147,9 @@ async function validateImageUrls(imageUrls: string[]): Promise<string[]> {
 export async function getAIResponse(
   systemPrompt: string,
   query: string,
-  imageUrls?: string[],
+  imageUrls?: string[]
 ): Promise<string> {
-  if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error("OPENROUTER_API_KEY is not set in environment variables");
-  }
-
-  const client = new OpenAI({
-    baseURL: "https://openrouter.ai/api/v1",
-    apiKey: process.env.OPENROUTER_API_KEY,
-    defaultHeaders: {
-      "HTTP-Referer":
-        process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
-      "X-Title": "Search AI",
-    },
-  });
+  const client = getSharedClient();
 
   try {
     // Create system message with conditional cache control for Gemini
@@ -149,7 +192,7 @@ export async function getAIResponse(
           (url): OpenRouterContentPartImage => ({
             type: "image_url",
             image_url: { url },
-          }),
+          })
         ),
       ];
       messages.push({
@@ -170,7 +213,7 @@ export async function getAIResponse(
 
     async function tryModel(
       model: string,
-      isGemini = false,
+      isGemini = false
     ): Promise<ChatCompletion> {
       // Remove cache control if not using Gemini
       if (!isGemini && systemContent?.cache_control) {
@@ -195,21 +238,25 @@ export async function getAIResponse(
     console.log(`📤 Sending request to OpenRouter with Gemini Flash 1.5...`);
     let completion;
     try {
-      completion = await tryModel("google/gemini-flash-1.5", true);
+      completion = await withRetry(() =>
+        tryModel("google/gemini-flash-1.5", true)
+      );
 
       // If content filter triggered, try fallback model
       if (completion.choices[0]?.finish_reason === "content_filter") {
         console.warn(
-          "Content filter triggered with Gemini, trying alternative models...",
+          "Content filter triggered with Gemini, trying alternative models..."
         );
-        completion = await tryModel("openai/gpt-4o-mini", false);
+        completion = await withRetry(() =>
+          tryModel("openai/gpt-4o-mini", false)
+        );
       }
     } catch (primaryError) {
       console.error("Gemini model failed, trying alternative models...");
       console.error(primaryError);
 
       // Try fallback model
-      completion = await tryModel("openai/gpt-4o-mini", false);
+      completion = await withRetry(() => tryModel("openai/gpt-4o-mini", false));
     }
 
     console.log("OpenRouter response:", completion);
@@ -217,7 +264,7 @@ export async function getAIResponse(
     // Check for content filter response on fallback model
     if (completion.choices[0]?.finish_reason === "content_filter") {
       console.warn(
-        "Content filter triggered on both models, using fallback description",
+        "Content filter triggered on both models, using fallback description"
       );
       return "";
     }
@@ -226,7 +273,7 @@ export async function getAIResponse(
     if (!response) {
       console.error(
         "❌ OpenRouter returned empty response. Full response:",
-        completion,
+        completion
       );
       return "";
     }
@@ -256,7 +303,7 @@ export class OpenRouter {
 
   private async makeRequest(
     messages: OpenRouterMessage[],
-    options: OpenRouterOptions = {},
+    options: OpenRouterOptions = {}
   ): Promise<Response> {
     const body = {
       model: options.model ?? "google/gemini-pro-vision",
@@ -280,19 +327,19 @@ export class OpenRouter {
 
   async chat(
     messages: OpenRouterMessage[],
-    options: OpenRouterOptions = {},
+    options: OpenRouterOptions = {}
   ): Promise<string> {
     const response = await this.makeRequest(messages, options);
     if (!response.body) {
       throw new Error("No response body received");
     }
-    const responseBody = (await response.json()) as OpenRouterResponse;
+    const responseBody = (await response.json()) as ChatCompletion;
     return responseBody.choices[0]?.message.content ?? "";
   }
 
   async chatStream(
     messages: OpenRouterMessage[],
-    options: OpenRouterOptions = {},
+    options: OpenRouterOptions = {}
   ): Promise<ReadableStream<string>> {
     const response = await this.makeRequest(messages, {
       ...options,
@@ -323,8 +370,8 @@ export class OpenRouter {
 
               try {
                 const data = JSON.parse(
-                  line.startsWith("data: ") ? line.slice(6) : line,
-                ) as OpenRouterStreamResponse;
+                  line.startsWith("data: ") ? line.slice(6) : line
+                ) as any; // Using any for stream response compatibility
 
                 const content = data.choices[0]?.delta.content ?? "";
                 if (content) {
@@ -348,7 +395,7 @@ export class OpenRouter {
 
   async generateImage(
     prompt: string,
-    imageUrls: string[] = [],
+    imageUrls: string[] = []
   ): Promise<string> {
     const messages: OpenRouterMessage[] = [
       {

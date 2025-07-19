@@ -6,6 +6,7 @@ import { db } from "../../../server/db";
 import { vectors } from "../../../server/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { Product } from "../conversion/plugin_class";
+import { sql } from "drizzle-orm";
 
 // Simple checksum function that's efficient for text comparison
 function generateChecksum(input: string): string {
@@ -303,32 +304,23 @@ export class ProductEmbeddingService {
           `\n🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} products)`
         );
 
-        const processedProducts: StoreInfo[] = [];
-
-        // Step 1: Process multimodal for this batch
+        // Step 1: Process multimodal for this batch IN PARALLEL
         console.log(
-          `[Batch ${batchNumber}] Step 1: Processing with multimodal processor...`
+          `[Batch ${batchNumber}] Step 1: Processing with multimodal processor (PARALLEL)...`
         );
-        for (const product of batch) {
-          try {
-            console.log(
-              `[Batch ${batchNumber}] Processing product ${product.product_id}: isPublished=${product.isPublished}`
-            );
-            const processedProduct = await this.processProduct(product, appId);
-            if (processedProduct) {
-              console.log(
-                `[Batch ${batchNumber}] Processed product ${processedProduct.product_id}: isPublished=${processedProduct.isPublished}`
-              );
-              processedProducts.push(processedProduct);
-            }
-          } catch (error) {
-            console.error(
-              `[Batch ${batchNumber}] Failed to process product ${product.product_id}:`,
-              error
-            );
-            // Continue processing other products in this batch
-          }
-        }
+
+        const startTime = Date.now();
+        const processedProducts = await this.processProductsBatchParallel(
+          batch,
+          appId,
+          batchNumber
+        );
+        const endTime = Date.now();
+        const processingTimeSeconds = ((endTime - startTime) / 1000).toFixed(1);
+
+        console.log(
+          `[Batch ${batchNumber}] Completed ${processedProducts.length}/${batch.length} products in ${processingTimeSeconds}s`
+        );
 
         // Step 2: Store this batch in database and Pinecone
         if (processedProducts.length > 0) {
@@ -358,9 +350,9 @@ export class ProductEmbeddingService {
         // Small delay between batches to prevent overwhelming the system
         if (i + PROCESSING_BATCH_SIZE < products.length) {
           console.log(
-            `[Batch ${batchNumber}] Waiting 2 seconds before next batch...`
+            `[Batch ${batchNumber}] Waiting 1 second before next batch...`
           );
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
 
@@ -380,6 +372,189 @@ export class ProductEmbeddingService {
       console.error("Error in processAndStoreProducts:", error);
       throw error;
     }
+  }
+
+  /**
+   * Process a batch of products in parallel for much faster multimodal processing
+   */
+  private async processProductsBatchParallel(
+    products: Product[],
+    appId: number,
+    batchNumber: number
+  ): Promise<StoreInfo[]> {
+    // Pre-fetch existing image descriptions for this batch to avoid unnecessary API calls
+    const imageChecksums = products
+      .map((p) => (p.images?.[0] ? generateChecksum(p.images[0]) : null))
+      .filter(Boolean) as string[];
+
+    const existingDescriptions = new Map<string, string>();
+
+    if (imageChecksums.length > 0) {
+      console.log(
+        `[Batch ${batchNumber}] Pre-checking ${imageChecksums.length} image descriptions...`
+      );
+
+      const existingVectors = await db.query.vectors.findMany({
+        where: and(
+          eq(vectors.appId, appId),
+          // Use IN clause for better performance
+          sql`${vectors.imageUrls} = ANY(${imageChecksums})`
+        ),
+        columns: {
+          imageUrls: true,
+          imageDescription: true,
+        },
+      });
+
+      for (const vector of existingVectors) {
+        if (vector.imageUrls && vector.imageDescription) {
+          existingDescriptions.set(vector.imageUrls, vector.imageDescription);
+        }
+      }
+
+      console.log(
+        `[Batch ${batchNumber}] Found ${existingDescriptions.size} cached image descriptions`
+      );
+    }
+
+    // Separate products that need image processing vs those that don't
+    const productsNeedingImageProcessing: Product[] = [];
+    const productsWithCachedImages: Product[] = [];
+
+    for (const product of products) {
+      const firstImageUrl = product.images?.[0];
+      if (firstImageUrl) {
+        const checksum = generateChecksum(firstImageUrl);
+        if (existingDescriptions.has(checksum)) {
+          productsWithCachedImages.push(product);
+        } else {
+          productsNeedingImageProcessing.push(product);
+        }
+      } else {
+        // No images, process immediately
+        productsWithCachedImages.push(product);
+      }
+    }
+
+    console.log(
+      `[Batch ${batchNumber}] ${productsWithCachedImages.length} products have cached data, ${productsNeedingImageProcessing.length} need image processing`
+    );
+
+    // Maximum concurrent API calls to avoid overwhelming OpenRouter
+    const MAX_CONCURRENT_API_CALLS = 10;
+
+    // Process products in smaller concurrent groups
+    const results: StoreInfo[] = [];
+
+    // First, quickly process products with cached images (no API calls needed)
+    for (const product of productsWithCachedImages) {
+      try {
+        const result = await this.processProductWithCache(
+          product,
+          appId,
+          existingDescriptions
+        );
+        if (result) {
+          results.push(result);
+        }
+      } catch (error) {
+        console.error(
+          `[Batch ${batchNumber}] ❌ Failed to process cached product ${product.product_id}:`,
+          error
+        );
+      }
+    }
+
+    // Then process products that need image processing in parallel
+    for (
+      let i = 0;
+      i < productsNeedingImageProcessing.length;
+      i += MAX_CONCURRENT_API_CALLS
+    ) {
+      const concurrentGroup = productsNeedingImageProcessing.slice(
+        i,
+        i + MAX_CONCURRENT_API_CALLS
+      );
+
+      console.log(
+        `[Batch ${batchNumber}] Processing ${concurrentGroup.length} products with new images concurrently (${i + 1}-${Math.min(i + MAX_CONCURRENT_API_CALLS, productsNeedingImageProcessing.length)}/${productsNeedingImageProcessing.length})`
+      );
+
+      // Process this group of products in parallel
+      const promises = concurrentGroup.map(async (product) => {
+        try {
+          const result = await this.processProduct(product, appId);
+          if (result) {
+            console.log(
+              `[Batch ${batchNumber}] ✅ Processed product ${result.product_id} (with new image processing)`
+            );
+          }
+          return result;
+        } catch (error) {
+          console.error(
+            `[Batch ${batchNumber}] ❌ Failed to process product ${product.product_id}:`,
+            error
+          );
+          return null;
+        }
+      });
+
+      // Wait for all concurrent API calls to complete
+      const groupResults = await Promise.all(promises);
+
+      // Add successful results
+      for (const result of groupResults) {
+        if (result) {
+          results.push(result);
+        }
+      }
+
+      // Small delay between concurrent groups to be respectful to the API
+      if (
+        i + MAX_CONCURRENT_API_CALLS <
+        productsNeedingImageProcessing.length
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Process a product that has cached image description (fast path)
+   */
+  private async processProductWithCache(
+    product: Product,
+    appId: number,
+    cachedDescriptions: Map<string, string>
+  ): Promise<StoreInfo | null> {
+    const firstImageUrl = product.images?.[0];
+    const baseText = `${product.name} ${product.description ?? ""}`;
+
+    let imageDescription: string | undefined;
+    let imageUrlChecksum: string | undefined;
+
+    if (firstImageUrl) {
+      imageUrlChecksum = generateChecksum(firstImageUrl);
+      imageDescription = cachedDescriptions.get(imageUrlChecksum);
+    }
+
+    // Combine text and image description for final text
+    const finalText = [baseText, imageDescription].filter(Boolean).join("\n");
+    const finalTextChecksum = generateChecksum(finalText);
+
+    return {
+      product_id: product.product_id.toString(),
+      product_name: product.name,
+      product_description: product.description ?? "",
+      text: finalText,
+      text_checksum: finalTextChecksum,
+      image_description: imageDescription,
+      first_image_url: firstImageUrl,
+      image_url_checksum: imageUrlChecksum,
+      isPublished: product.isPublished,
+    };
   }
 
   public async upsertSingleProduct(
