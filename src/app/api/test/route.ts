@@ -48,8 +48,8 @@ export async function GET(request: Request) {
       status: "success",
       message: "StyleSeeker Worker API is working!",
       timestamp: new Date().toISOString(),
-      origin: origin || "no-origin",
-      environment: process.env.NODE_ENV || "development",
+      origin: origin ?? "no-origin",
+      environment: process.env.NODE_ENV ?? "development",
     });
 
     return setCorsHeaders(response, origin);
@@ -72,14 +72,14 @@ export async function POST(request: Request) {
   console.log(`[API TEST] POST request from origin: ${origin}`);
 
   try {
-    const body = await request.json().catch(() => ({}));
+    const body: unknown = await request.json().catch(() => ({}));
 
     const response = NextResponse.json({
       status: "success",
       message: "POST test successful",
       timestamp: new Date().toISOString(),
       receivedData: body,
-      origin: origin || "no-origin",
+      origin: origin ?? "no-origin",
     });
 
     return setCorsHeaders(response, origin);

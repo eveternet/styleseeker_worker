@@ -118,7 +118,7 @@ export async function POST(
       );
 
       // Process in background (don't await)
-      (async () => {
+      void (async () => {
         try {
           console.log(`[Background Import] Starting for app ${parsedAppId}`);
           const embeddingService = new ProductEmbeddingService();

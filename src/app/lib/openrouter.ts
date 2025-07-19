@@ -33,6 +33,15 @@ interface OpenRouterOptions {
   stream?: boolean;
 }
 
+// Interface for streaming response data
+interface StreamResponseData {
+  choices: Array<{
+    delta: {
+      content?: string;
+    };
+  }>;
+}
+
 // Create a shared OpenAI client instance for connection reuse
 let sharedClient: OpenAI | null = null;
 
@@ -70,8 +79,8 @@ function sleep(ms: number): Promise<void> {
  */
 async function withRetry<T>(
   fn: () => Promise<T>,
-  maxRetries: number = 3,
-  baseDelay: number = 1000
+  maxRetries = 3,
+  baseDelay = 1000
 ): Promise<T> {
   let lastError: Error;
 
@@ -371,7 +380,7 @@ export class OpenRouter {
               try {
                 const data = JSON.parse(
                   line.startsWith("data: ") ? line.slice(6) : line
-                ) as any; // Using any for stream response compatibility
+                ) as StreamResponseData; // Using the new interface
 
                 const content = data.choices[0]?.delta.content ?? "";
                 if (content) {

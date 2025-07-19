@@ -4,9 +4,8 @@ import get_plugin_name from "../conversion/get_plugin_name";
 import visionService from "./multimodal_processor";
 import { db } from "../../../server/db";
 import { vectors } from "../../../server/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import type { Product } from "../conversion/plugin_class";
-import { sql } from "drizzle-orm";
 
 // Simple checksum function that's efficient for text comparison
 function generateChecksum(input: string): string {
@@ -293,7 +292,7 @@ export class ProductEmbeddingService {
 
       const PROCESSING_BATCH_SIZE = 100;
       let totalProcessedProducts = 0;
-      let totalBatches = Math.ceil(products.length / PROCESSING_BATCH_SIZE);
+      const totalBatches = Math.ceil(products.length / PROCESSING_BATCH_SIZE);
 
       // Process products in batches of 100 through the entire pipeline
       for (let i = 0; i < products.length; i += PROCESSING_BATCH_SIZE) {
@@ -397,8 +396,7 @@ export class ProductEmbeddingService {
       const existingVectors = await db.query.vectors.findMany({
         where: and(
           eq(vectors.appId, appId),
-          // Use IN clause for better performance
-          sql`${vectors.imageUrls} = ANY(${imageChecksums})`
+          inArray(vectors.imageUrls, imageChecksums)
         ),
         columns: {
           imageUrls: true,
@@ -414,6 +412,10 @@ export class ProductEmbeddingService {
 
       console.log(
         `[Batch ${batchNumber}] Found ${existingDescriptions.size} cached image descriptions`
+      );
+    } else {
+      console.log(
+        `[Batch ${batchNumber}] No images to pre-check in this batch`
       );
     }
 
