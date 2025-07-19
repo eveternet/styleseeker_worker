@@ -55,7 +55,7 @@ export class ProductEmbeddingService {
       console.error("Failed to initialize Pinecone client:", error);
       throw new Error(
         "Failed to initialize Pinecone client: " +
-          (error instanceof Error ? error.message : "Unknown error"),
+          (error instanceof Error ? error.message : "Unknown error")
       );
     }
   }
@@ -73,14 +73,14 @@ export class ProductEmbeddingService {
     } catch (error) {
       console.error(`Failed to get products for app ${appId}:`, error);
       throw new Error(
-        `Failed to get products for app ${appId}: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to get products for app ${appId}: ${error instanceof Error ? error.message : "Unknown error"}`
       );
     }
   }
 
   public async processProduct(
     product: Product,
-    appId: number,
+    appId: number
   ): Promise<StoreInfo | null> {
     const firstImageUrl =
       product.images && product.images.length > 0
@@ -99,7 +99,7 @@ export class ProductEmbeddingService {
       const existingVector = await db.query.vectors.findFirst({
         where: and(
           eq(vectors.appId, appId),
-          eq(vectors.imageUrls, imageUrlChecksum),
+          eq(vectors.imageUrls, imageUrlChecksum)
         ),
       });
       if (existingVector) {
@@ -116,7 +116,7 @@ export class ProductEmbeddingService {
       !existingImageDescription
     ) {
       console.log(
-        `\n🖼️ Processing ${product.images.length} images for: ${product.name}`,
+        `\n🖼️ Processing ${product.images.length} images for: ${product.name}`
       );
 
       try {
@@ -175,15 +175,18 @@ export class ProductEmbeddingService {
 
   private async batchInsertProducts(
     products: StoreInfo[],
-    appId: number,
+    appId: number
   ): Promise<void> {
     if (products.length === 0) return;
 
     const index = this.pinecone.index(this.indexName);
     const namespace = `app_${appId}`;
 
+    // Define batch size for Pinecone operations (to avoid 413 errors)
+    const PINECONE_BATCH_SIZE = 100;
+
     try {
-      // First, upsert to Pinecone with metadata including isPublished
+      // Create Pinecone records
       const pineconeRecords = products.map((product) => ({
         id: product.product_id.toString(),
         text: product.text,
@@ -196,17 +199,52 @@ export class ProductEmbeddingService {
       }));
 
       console.log(
-        `[Pinecone] Upserting ${pineconeRecords.length} records to namespace: ${namespace}`,
+        `[Pinecone] Upserting ${pineconeRecords.length} records to namespace: ${namespace} in batches of ${PINECONE_BATCH_SIZE}`
       );
-      pineconeRecords.forEach((record) => {
-        console.log(
-          `[Pinecone] Product ${record.id}: isPublished=${record.isPublished}`,
+
+      // Process Pinecone upserts in batches
+      for (let i = 0; i < pineconeRecords.length; i += PINECONE_BATCH_SIZE) {
+        const batch = pineconeRecords.slice(i, i + PINECONE_BATCH_SIZE);
+        const batchNumber = Math.floor(i / PINECONE_BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(
+          pineconeRecords.length / PINECONE_BATCH_SIZE
         );
-      });
 
-      await index.namespace(namespace).upsertRecords(pineconeRecords);
+        console.log(
+          `[Pinecone] Processing batch ${batchNumber}/${totalBatches} (${batch.length} records)`
+        );
 
-      // Then, upsert to our database
+        batch.forEach((record) => {
+          console.log(
+            `[Pinecone] Product ${record.id}: isPublished=${record.isPublished}`
+          );
+        });
+
+        try {
+          await index.namespace(namespace).upsertRecords(batch);
+          console.log(
+            `[Pinecone] Successfully upserted batch ${batchNumber}/${totalBatches}`
+          );
+        } catch (batchError) {
+          console.error(
+            `[Pinecone] Failed to upsert batch ${batchNumber}/${totalBatches}:`,
+            batchError
+          );
+          throw batchError;
+        }
+
+        // Small delay between batches to be respectful to the API
+        if (i + PINECONE_BATCH_SIZE < pineconeRecords.length) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      console.log(`[Pinecone] All batches completed successfully`);
+
+      // Then, upsert to our database (also in batches for large datasets)
+      console.log(
+        `[Database] Upserting ${products.length} products to database`
+      );
       for (const product of products) {
         await db
           .insert(vectors)
@@ -230,6 +268,8 @@ export class ProductEmbeddingService {
             },
           });
       }
+
+      console.log(`[Database] All products upserted successfully`);
     } catch (error) {
       console.error("Error in batchInsertProducts:", error);
       throw error;
@@ -237,7 +277,7 @@ export class ProductEmbeddingService {
   }
 
   public async processAndStoreProducts(
-    appId: number,
+    appId: number
   ): Promise<ProcessingResult> {
     try {
       const { products } = await this.getPluginProducts(appId);
@@ -246,41 +286,95 @@ export class ProductEmbeddingService {
         throw new Error(`Invalid products data returned for app ${appId}`);
       }
 
-      console.log(`Processing ${products.length} products for app ${appId}`);
-      const processedProducts: StoreInfo[] = [];
+      console.log(
+        `Processing ${products.length} products for app ${appId} in batches of 100`
+      );
 
-      for (const product of products) {
-        try {
-          console.log(
-            `[Import] Processing product ${product.product_id}: isPublished=${product.isPublished}`,
-          );
-          const processedProduct = await this.processProduct(product, appId);
-          if (processedProduct) {
+      const PROCESSING_BATCH_SIZE = 100;
+      let totalProcessedProducts = 0;
+      let totalBatches = Math.ceil(products.length / PROCESSING_BATCH_SIZE);
+
+      // Process products in batches of 100 through the entire pipeline
+      for (let i = 0; i < products.length; i += PROCESSING_BATCH_SIZE) {
+        const batch = products.slice(i, i + PROCESSING_BATCH_SIZE);
+        const batchNumber = Math.floor(i / PROCESSING_BATCH_SIZE) + 1;
+
+        console.log(
+          `\n🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} products)`
+        );
+
+        const processedProducts: StoreInfo[] = [];
+
+        // Step 1: Process multimodal for this batch
+        console.log(
+          `[Batch ${batchNumber}] Step 1: Processing with multimodal processor...`
+        );
+        for (const product of batch) {
+          try {
             console.log(
-              `[Import] Processed product ${processedProduct.product_id}: isPublished=${processedProduct.isPublished}`,
+              `[Batch ${batchNumber}] Processing product ${product.product_id}: isPublished=${product.isPublished}`
             );
-            processedProducts.push(processedProduct);
+            const processedProduct = await this.processProduct(product, appId);
+            if (processedProduct) {
+              console.log(
+                `[Batch ${batchNumber}] Processed product ${processedProduct.product_id}: isPublished=${processedProduct.isPublished}`
+              );
+              processedProducts.push(processedProduct);
+            }
+          } catch (error) {
+            console.error(
+              `[Batch ${batchNumber}] Failed to process product ${product.product_id}:`,
+              error
+            );
+            // Continue processing other products in this batch
           }
-        } catch (error) {
-          console.error(
-            `Failed to process product ${product.product_id}:`,
-            error,
+        }
+
+        // Step 2: Store this batch in database and Pinecone
+        if (processedProducts.length > 0) {
+          console.log(
+            `[Batch ${batchNumber}] Step 2: Storing ${processedProducts.length} products in database and Pinecone...`
           );
-          // Continue processing other products
+
+          try {
+            await this.batchInsertProducts(processedProducts, appId);
+            totalProcessedProducts += processedProducts.length;
+            console.log(
+              `✅ [Batch ${batchNumber}] Successfully stored ${processedProducts.length} products. Total processed: ${totalProcessedProducts}/${products.length}`
+            );
+          } catch (error) {
+            console.error(
+              `❌ [Batch ${batchNumber}] Failed to store products:`,
+              error
+            );
+            // Continue with next batch even if this one fails
+          }
+        } else {
+          console.log(
+            `⚠️ [Batch ${batchNumber}] No products were successfully processed in this batch`
+          );
+        }
+
+        // Small delay between batches to prevent overwhelming the system
+        if (i + PROCESSING_BATCH_SIZE < products.length) {
+          console.log(
+            `[Batch ${batchNumber}] Waiting 2 seconds before next batch...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         }
       }
 
-      if (processedProducts.length > 0) {
-        await this.batchInsertProducts(processedProducts, appId);
-      }
+      console.log(
+        `\n🎉 Completed processing all ${totalBatches} batches. Total products processed: ${totalProcessedProducts}/${products.length}`
+      );
 
       return {
         message:
-          processedProducts.length === products.length
+          totalProcessedProducts === products.length
             ? "All products processed and stored successfully"
-            : `Processed ${processedProducts.length} out of ${products.length} products`,
-        imported_count: processedProducts.length,
-        status: processedProducts.length > 0 ? 200 : 500,
+            : `Processed ${totalProcessedProducts} out of ${products.length} products`,
+        imported_count: totalProcessedProducts,
+        status: totalProcessedProducts > 0 ? 200 : 500,
       };
     } catch (error) {
       console.error("Error in processAndStoreProducts:", error);
@@ -290,7 +384,7 @@ export class ProductEmbeddingService {
 
   public async upsertSingleProduct(
     product: Product,
-    appId: number,
+    appId: number
   ): Promise<ProcessingResult> {
     try {
       const processedProduct = await this.processProduct(product, appId);
@@ -316,7 +410,7 @@ export class ProductEmbeddingService {
 
   public async deleteProduct(
     productId: string,
-    appId: number,
+    appId: number
   ): Promise<{ success: boolean; message: string }> {
     try {
       // Get namespace-specific index
@@ -338,7 +432,7 @@ export class ProductEmbeddingService {
     } catch (error) {
       console.error(
         `Error deleting product ${productId} from app ${appId}:`,
-        error,
+        error
       );
       return {
         success: false,
@@ -350,7 +444,7 @@ export class ProductEmbeddingService {
   public async setPublishedStatus(
     productId: string,
     appId: number,
-    isPublished: boolean,
+    isPublished: boolean
   ): Promise<{ success: boolean; message: string }> {
     try {
       // Get namespace-specific index
@@ -378,7 +472,7 @@ export class ProductEmbeddingService {
     } catch (error) {
       console.error(
         `Error setting published status for product ${productId} in app ${appId}:`,
-        error,
+        error
       );
       return {
         success: false,
@@ -390,7 +484,7 @@ export class ProductEmbeddingService {
   public async setPublishedStatusWithFetch(
     productId: string,
     appId: number,
-    isPublished: boolean,
+    isPublished: boolean
   ): Promise<{ success: boolean; message: string }> {
     try {
       // First, check if the product exists in our database
@@ -444,7 +538,7 @@ export class ProductEmbeddingService {
     } catch (error) {
       console.error(
         `Error setting published status with fetch for product ${productId} in app ${appId}:`,
-        error,
+        error
       );
       return {
         success: false,
