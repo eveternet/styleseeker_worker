@@ -183,7 +183,7 @@ export class ProductEmbeddingService {
     const namespace = `app_${appId}`;
 
     // Define batch size for Pinecone operations (to avoid 413 errors)
-    const PINECONE_BATCH_SIZE = 100;
+    const PINECONE_BATCH_SIZE = 50;
 
     try {
       // Create Pinecone records
